@@ -112,6 +112,10 @@ jobs:
           brew install ccache
           {
             echo "USE_CCACHE=1"
+            # O Podfile aponta CC/CXX para $(REACT_NATIVE_PATH)/scripts/xcode/ccache-clang.sh no projeto
+            # inteiro, mas só os pods definem REACT_NATIVE_PATH: o target dos Widgets ficava com
+            # "/../../node_modules/..." e o build quebrava. Variável de ambiente vale para todos os targets.
+            echo "REACT_NATIVE_PATH=$GITHUB_WORKSPACE/node_modules/react-native"
             echo "CCACHE_DIR=$HOME/.ccache"
             echo "CCACHE_MAXSIZE=3G"
             echo "CCACHE_COMPILERCHECK=content"
