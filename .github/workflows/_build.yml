@@ -164,8 +164,10 @@ jobs:
           files=(${{ inputs.files }})
           [ ${#files[@]} -gt 0 ] || { echo "::error::nenhum instalador foi gerado"; exit 1; }
           # As plataformas rodam em paralelo: quem chega primeiro cria a release, os outros só anexam.
+          # --target: o checkout é do repo privado e já tem a tag local; sem isso o gh recusa criar a
+          # release aqui ("v1.3.1 exists locally but has not been pushed").
           gh release view "$TAG" >/dev/null 2>&1 \
-            || gh release create "$TAG" --title "TheroTV ${TAG#v}" \
+            || gh release create "$TAG" --target main --title "TheroTV ${TAG#v}" \
                  --notes "Instaladores do TheroTV ${TAG#v}, gerados do código-fonte da tag $TAG." \
             || gh release view "$TAG" >/dev/null
           gh release upload "$TAG" "${files[@]}" --clobber
