@@ -103,30 +103,15 @@ jobs:
           key: electron-${{ runner.os }}-${{ hashFiles('apps/desktop/package.json') }}
           restore-keys: electron-${{ runner.os }}-
 
-      # iOS/macOS: ccache nos .cpp/.mm do React Native e dos pods (o Podfile liga com USE_CCACHE=1),
-      # mais o cache de specs do CocoaPods. O cache do ccache é salvo mesmo se o build falhar, para
-      # a próxima tentativa já começar adiantada.
-      - name: Instala o ccache
-        if: inputs.platform == 'ios' || inputs.platform == 'macos'
-        run: |
-          brew install ccache
-          {
-            echo "USE_CCACHE=1"
-            # O Podfile aponta CC/CXX para $(REACT_NATIVE_PATH)/scripts/xcode/ccache-clang.sh no projeto
-            # inteiro, mas só os pods definem REACT_NATIVE_PATH: o target dos Widgets ficava com
-            # "/../../node_modules/..." e o build quebrava. Variável de ambiente vale para todos os targets.
-            echo "REACT_NATIVE_PATH=$GITHUB_WORKSPACE/node_modules/react-native"
-            echo "CCACHE_DIR=$HOME/.ccache"
-            echo "CCACHE_MAXSIZE=3G"
-            echo "CCACHE_COMPILERCHECK=content"
-            echo "CCACHE_SLOPPINESS=include_file_mtime,include_file_ctime,time_macros,pch_defines,modules,system_headers"
-          } >> "$GITHUB_ENV"
-      - name: Restaura ccache e CocoaPods
+      # iOS/macOS: cache de specs do CocoaPods. O ccache (USE_CCACHE=1 no Podfile) foi tentado e
+      # quebra o target TheroTVWidgets ("unable to spawn /../../node_modules/.../ccache-clang.sh":
+      # o REACT_NATIVE_PATH do Podfile depende de PODS_ROOT, vazio nesse target). Para religar é
+      # preciso passar REACT_NATIVE_PATH na linha de comando do xcodebuild (make.py).
+      - name: Restaura o cache do CocoaPods
         if: inputs.platform == 'ios' || inputs.platform == 'macos'
         uses: actions/cache/restore@v4
         with:
           path: |
-            ~/.ccache
             ~/Library/Caches/CocoaPods
           key: native-${{ inputs.platform }}-${{ github.run_id }}
           restore-keys: native-${{ inputs.platform }}-
@@ -149,12 +134,11 @@ jobs:
             python3 make.py release "${{ steps.v.outputs.version }}" "$target" ${{ inputs.flags }}
           done
 
-      - name: Salva ccache e CocoaPods
+      - name: Salva o cache do CocoaPods
         if: always() && (inputs.platform == 'ios' || inputs.platform == 'macos')
         uses: actions/cache/save@v4
         with:
           path: |
-            ~/.ccache
             ~/Library/Caches/CocoaPods
           key: native-${{ inputs.platform }}-${{ github.run_id }}
 
