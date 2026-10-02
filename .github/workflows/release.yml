@@ -1,0 +1,219 @@
+name: Release
+
+# Este arquivo mora no repositório PÚBLICO de releases (therotv/therotv.github.io): minutos de
+# Actions grátis e ilimitados. O código-fonte fica no repositório privado e só é baixado aqui,
+# no runner, com SOURCE_REPO_TOKEN. A fonte deste arquivo é ci/releases-repo/ no repo privado;
+# `python3 make.py releases-repo` o publica aqui.
+#
+# `therotv publish 1.2.0` sobe a versão e a tag v1.2.0 no repo privado e dispara este workflow
+# (workflow_dispatch). Para refazer os builds de uma tag que já existe: `therotv rebuild v1.2.0`
+# ou Run workflow informando a tag.
+#
+# Sem gatilho de pull_request/push de propósito: o repo é público e tem SOURCE_REPO_TOKEN, então
+# ninguém de fora pode fazer rodar código aqui.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag do repo privado a (re)construir, ex.: v1.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event.inputs.tag }}
+  SOURCE_REPO: netovieira/therotv
+  # Chaves públicas embutidas no bundle (EXPO_PUBLIC_*). Cadastre neste repo com
+  # `python3 make.py secrets`. O app roda sem elas (sem pôster do TMDB / sem Firebase).
+  EXPO_PUBLIC_TMDB_API_KEY: ${{ secrets.EXPO_PUBLIC_TMDB_API_KEY }}
+  EXPO_PUBLIC_TMDB_API_V3_KEY: ${{ secrets.EXPO_PUBLIC_TMDB_API_V3_KEY }}
+  EXPO_PUBLIC_GROQ_API_KEY: ${{ secrets.EXPO_PUBLIC_GROQ_API_KEY }}
+  EXPO_PUBLIC_GROQ_MODEL: ${{ secrets.EXPO_PUBLIC_GROQ_MODEL }}
+  EXPO_PUBLIC_FIREBASE_API_KEY: ${{ secrets.EXPO_PUBLIC_FIREBASE_API_KEY }}
+  EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+  EXPO_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.EXPO_PUBLIC_FIREBASE_PROJECT_ID }}
+  EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ secrets.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET }}
+  EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
+  EXPO_PUBLIC_FIREBASE_APP_ID: ${{ secrets.EXPO_PUBLIC_FIREBASE_APP_ID }}
+  EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID }}
+  # Um client ID por superfície: o Google recusa redirect de scheme custom em cliente do tipo
+  # Web, então o APK e o .app da release precisam dos clientes nativos, não deste de web.
+  EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID }}
+  EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID }}
+
+jobs:
+  # Falha cedo se a tag não bate com o app.json (ex.: tag criada à mão sem `therotv publish`).
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - id: v
+        run: |
+          version="${TAG#v}"
+          declared="$(python3 -c 'import json;print(json.load(open("app.json"))["expo"]["version"])')"
+          if [ "$version" != "$declared" ]; then
+            echo "::error::a tag $TAG não bate com a versão do app.json ($declared). Use \`therotv publish $version\`."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  android:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Gera o APK
+        run: python3 make.py release ${{ needs.check.outputs.version }} apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist/*.apk
+          if-no-files-found: error
+
+  macos:
+    needs: check
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Gera o DMG (Mac Catalyst, assinatura ad-hoc)
+        run: python3 make.py release ${{ needs.check.outputs.version }} dmg --unsigned
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  ios:
+    needs: check
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: pod install
+        working-directory: ios
+        env:
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
+        run: pod install
+      - name: Gera o IPA (sem assinatura)
+        run: python3 make.py release ${{ needs.check.outputs.version }} ios --unsigned
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: dist/*.ipa
+          if-no-files-found: error
+
+  desktop:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+            targets: exe
+          - os: ubuntu-latest
+            name: linux
+            targets: appimage deb rpm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: rpm (necessário para o alvo .rpm)
+        if: matrix.name == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+      - name: Gera os instaladores
+        shell: bash
+        run: |
+          for target in ${{ matrix.targets }}; do
+            python3 make.py release ${{ needs.check.outputs.version }} "$target"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.name }}
+          path: |
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
+          if-no-files-found: error
+
+  # Publica o que foi gerado, mesmo que uma plataforma tenha falhado: o run fica vermelho e
+  # mostra qual, e rodar o workflow de novo (workflow_dispatch) completa a release.
+  release:
+    needs: [check, android, macos, ios, desktop]
+    if: ${{ !cancelled() && needs.check.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Checksums
+        working-directory: assets
+        run: |
+          ls -l
+          # O merge dos artefatos pode trazer pastas soltas (já veio uma `images/` do job
+          # desktop-linux). A release só aceita arquivos: descarta as pastas e avisa.
+          for d in */; do
+            [ -d "$d" ] && { echo "::warning::descartando pasta que não é instalador: $d"; rm -rf "$d"; }
+          done
+          [ -n "$(find . -maxdepth 1 -type f)" ] || { echo "::error::nenhum artefato foi gerado"; exit 1; }
+          sha256sum -- * > SHA256SUMS.txt
+      - name: Cria/atualiza a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --clobber
+          else
+            gh release create "$TAG" assets/* --title "TheroTV ${TAG#v}" \
+              --notes "Instaladores do TheroTV ${TAG#v}, gerados do código-fonte da tag $TAG."
+          fi
