@@ -70,7 +70,62 @@ jobs:
         with:
           node-version: "24"
       - uses: oven-sh/setup-bun@v2
+
+      # ---- caches: o que mais pesa é compilar C++ do React Native (iOS/macOS) e baixar dependências ----
+      - name: Cache do bun
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
+
+      # Android: o setup-gradle já guarda ~/.gradle; ligar o build cache reaproveita as tarefas
+      # (compilação nativa inclusive) entre runs.
+      - name: Gradle build cache
+        if: inputs.platform == 'android'
+        shell: bash
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.caching=true" >> ~/.gradle/gradle.properties
+
+      # Desktop: npm do apps/desktop e os binários do Electron/electron-builder (centenas de MB).
+      - name: Cache do Electron e do npm
+        if: inputs.platform == 'windows' || inputs.platform == 'linux'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('apps/desktop/package.json') }}
+          restore-keys: electron-${{ runner.os }}-
+
+      # iOS/macOS: ccache nos .cpp/.mm do React Native e dos pods (o Podfile liga com USE_CCACHE=1),
+      # mais o cache de specs do CocoaPods. O cache do ccache é salvo mesmo se o build falhar, para
+      # a próxima tentativa já começar adiantada.
+      - name: Instala o ccache
+        if: inputs.platform == 'ios' || inputs.platform == 'macos'
+        run: |
+          brew install ccache
+          {
+            echo "USE_CCACHE=1"
+            echo "CCACHE_DIR=$HOME/.ccache"
+            echo "CCACHE_MAXSIZE=3G"
+            echo "CCACHE_COMPILERCHECK=content"
+            echo "CCACHE_SLOPPINESS=include_file_mtime,include_file_ctime,time_macros,pch_defines,modules,system_headers"
+          } >> "$GITHUB_ENV"
+      - name: Restaura ccache e CocoaPods
+        if: inputs.platform == 'ios' || inputs.platform == 'macos'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.ccache
+            ~/Library/Caches/CocoaPods
+          key: native-${{ inputs.platform }}-${{ github.run_id }}
+          restore-keys: native-${{ inputs.platform }}-
 
       - name: pod install
         if: inputs.platform == 'ios'
@@ -89,6 +144,15 @@ jobs:
           for target in ${{ inputs.targets }}; do
             python3 make.py release "${{ steps.v.outputs.version }}" "$target" ${{ inputs.flags }}
           done
+
+      - name: Salva ccache e CocoaPods
+        if: always() && (inputs.platform == 'ios' || inputs.platform == 'macos')
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.ccache
+            ~/Library/Caches/CocoaPods
+          key: native-${{ inputs.platform }}-${{ github.run_id }}
 
       - name: Anexa na release
         shell: bash
