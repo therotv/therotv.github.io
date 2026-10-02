@@ -1,0 +1,128 @@
+name: Build (reutilizável)
+
+# Uma plataforma por vez: baixa o código privado da tag, gera os instaladores e anexa na release
+# deste repo. Chamado por release-<plataforma>.yml; cada plataforma é um run independente, então
+# uma que falha não derruba nem refaz as outras.
+on:
+  workflow_call:
+    inputs:
+      tag: { required: true, type: string }
+      platform: { required: true, type: string }   # android | macos | ios | windows | linux
+      runner: { required: true, type: string }
+      targets: { required: true, type: string }    # alvos do make.py release, separados por espaço
+      files: { required: true, type: string }      # padrões dos arquivos gerados, separados por espaço
+      flags: { required: false, type: string, default: "" }
+
+env:
+  TAG: ${{ inputs.tag }}
+  SOURCE_REPO: netovieira/therotv
+  # Chaves públicas embutidas no bundle (EXPO_PUBLIC_*). Cadastre neste repo com
+  # `python3 make.py secrets`. O app roda sem elas (sem pôster do TMDB / sem Firebase).
+  EXPO_PUBLIC_TMDB_API_KEY: ${{ secrets.EXPO_PUBLIC_TMDB_API_KEY }}
+  EXPO_PUBLIC_TMDB_API_V3_KEY: ${{ secrets.EXPO_PUBLIC_TMDB_API_V3_KEY }}
+  EXPO_PUBLIC_GROQ_API_KEY: ${{ secrets.EXPO_PUBLIC_GROQ_API_KEY }}
+  EXPO_PUBLIC_GROQ_MODEL: ${{ secrets.EXPO_PUBLIC_GROQ_MODEL }}
+  EXPO_PUBLIC_FIREBASE_API_KEY: ${{ secrets.EXPO_PUBLIC_FIREBASE_API_KEY }}
+  EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+  EXPO_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.EXPO_PUBLIC_FIREBASE_PROJECT_ID }}
+  EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ secrets.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET }}
+  EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
+  EXPO_PUBLIC_FIREBASE_APP_ID: ${{ secrets.EXPO_PUBLIC_FIREBASE_APP_ID }}
+  EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID }}
+  # Um client ID por superfície: o Google recusa redirect de scheme custom em cliente do tipo
+  # Web, então o APK e o .app da release precisam dos clientes nativos, não deste de web.
+  EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID }}
+  EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID }}
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+
+      # Falha cedo se a tag não bate com o app.json (ex.: tag criada à mão sem `therotv publish`).
+      - name: Confere a versão
+        id: v
+        shell: bash
+        run: |
+          version="${TAG#v}"
+          declared="$(python3 -c 'import json;print(json.load(open("app.json"))["expo"]["version"])')"
+          if [ "$version" != "$declared" ]; then
+            echo "::error::a tag $TAG não bate com a versão do app.json ($declared). Use \`therotv publish $version\`."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - if: inputs.platform == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - if: inputs.platform == 'android'
+        uses: gradle/actions/setup-gradle@v4
+      - if: inputs.platform == 'windows' || inputs.platform == 'linux'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - name: pod install
+        if: inputs.platform == 'ios'
+        working-directory: ios
+        env:
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
+        run: pod install
+      - name: rpm (necessário para o alvo .rpm)
+        if: inputs.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Gera os instaladores
+        shell: bash
+        run: |
+          for target in ${{ inputs.targets }}; do
+            python3 make.py release "${{ steps.v.outputs.version }}" "$target" ${{ inputs.flags }}
+          done
+
+      - name: Anexa na release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          shopt -s nullglob
+          files=(${{ inputs.files }})
+          [ ${#files[@]} -gt 0 ] || { echo "::error::nenhum instalador foi gerado"; exit 1; }
+          # As plataformas rodam em paralelo: quem chega primeiro cria a release, os outros só anexam.
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --title "TheroTV ${TAG#v}" \
+                 --notes "Instaladores do TheroTV ${TAG#v}, gerados do código-fonte da tag $TAG." \
+            || gh release view "$TAG" >/dev/null
+          gh release upload "$TAG" "${files[@]}" --clobber
+
+      # SHA256SUMS.txt cobre a release inteira: cada plataforma o refaz com o que já está lá.
+      - name: Atualiza SHA256SUMS.txt
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$GH_REPO/releases/tags/$TAG" \
+            --jq '.assets[] | select(.name != "SHA256SUMS.txt") | "\(.digest // "")  \(.name)"' > sums.raw
+          : > SHA256SUMS.txt
+          while read -r digest name; do
+            if [ -n "$digest" ]; then
+              echo "${digest#sha256:}  $name" >> SHA256SUMS.txt
+            else
+              gh release download "$TAG" --pattern "$name" --dir sumdl --clobber
+              (cd sumdl && sha256sum -- "$name") >> SHA256SUMS.txt
+            fi
+          done < sums.raw
+          cat SHA256SUMS.txt
+          gh release upload "$TAG" SHA256SUMS.txt --clobber

@@ -1,0 +1,32 @@
+name: Release iOS (IPA)
+
+# Este arquivo mora no repo PÚBLICO therotv/therotv.github.io (Actions grátis); a fonte é
+# ci/releases-repo/ no repo privado e `python3 make.py releases-repo` o publica. Cada plataforma é
+# um workflow independente: `therotv publish` dispara todos, e `therotv rebuild vX.Y.Z --only ios`
+# refaz só este. Sem gatilho de pull_request/push de propósito: o repo é público e guarda
+# SOURCE_REPO_TOKEN.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag do repo privado a (re)construir, ex.: v1.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-ios-${{ github.event.inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    uses: ./.github/workflows/_build.yml
+    with:
+      tag: ${{ github.event.inputs.tag }}
+      platform: ios
+      runner: macos-26
+      targets: "ios"
+      files: "dist/*.ipa"
+      flags: "--unsigned"
+    secrets: inherit
