@@ -1,6 +1,6 @@
 name: Build (reutilizável)
 
-# Uma plataforma por vez: baixa o código privado da tag, gera os instaladores e anexa na release
+# Uma plataforma por vez: baixa o código privado da tag (deploy key SSH só de leitura, secret SOURCE_REPO_KEY), gera os instaladores e anexa na release
 # deste repo. Chamado por release-<plataforma>.yml; cada plataforma é um run independente, então
 # uma que falha não derruba nem refaz as outras.
 on:
@@ -41,7 +41,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: ${{ env.SOURCE_REPO }}
-          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          ssh-key: ${{ secrets.SOURCE_REPO_KEY }}
           ref: ${{ env.TAG }}
           persist-credentials: false
 

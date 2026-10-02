@@ -4,7 +4,7 @@ name: Release Windows
 # ci/releases-repo/ no repo privado e `python3 make.py releases-repo` o publica. Cada plataforma é
 # um workflow independente: `therotv publish` dispara todos, e `therotv rebuild vX.Y.Z --only windows`
 # refaz só este. Sem gatilho de pull_request/push de propósito: o repo é público e guarda
-# SOURCE_REPO_TOKEN.
+# SOURCE_REPO_KEY.
 on:
   workflow_dispatch:
     inputs:
