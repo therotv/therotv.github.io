@@ -12,6 +12,7 @@ on:
       targets: { required: true, type: string }    # alvos do make.py release, separados por espaço
       files: { required: true, type: string }      # padrões dos arquivos gerados, separados por espaço
       flags: { required: false, type: string, default: "" }
+      notes: { required: false, type: string, default: "" }   # corpo da release: o que há de novo
 
 env:
   TAG: ${{ inputs.tag }}
@@ -147,6 +148,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          NOTES: ${{ inputs.notes }}
         run: |
           shopt -s nullglob
           files=(${{ inputs.files }})
@@ -156,7 +158,7 @@ jobs:
           # release aqui ("v1.3.1 exists locally but has not been pushed").
           gh release view "$TAG" >/dev/null 2>&1 \
             || gh release create "$TAG" --target main --title "TheroTV ${TAG#v}" \
-                 --notes "Instaladores do TheroTV ${TAG#v}, gerados do código-fonte da tag $TAG." \
+                 --notes "${NOTES:-Instaladores do TheroTV ${TAG#v}, gerados do código-fonte da tag $TAG.}" \
             || gh release view "$TAG" >/dev/null
           gh release upload "$TAG" "${files[@]}" --clobber
 

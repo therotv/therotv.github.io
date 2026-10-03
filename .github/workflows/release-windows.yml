@@ -11,6 +11,10 @@ on:
       tag:
         description: "Tag do repo privado a (re)construir, ex.: v1.2.0"
         required: true
+      notes:
+        description: "O que há de novo (corpo da release), extraído do git log pelo make.py"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -24,8 +28,9 @@ jobs:
     uses: ./.github/workflows/_build.yml
     with:
       tag: ${{ github.event.inputs.tag }}
+      notes: ${{ github.event.inputs.notes }}
       platform: windows
       runner: windows-latest
       targets: "exe"
-      files: "dist/*.exe"
+      files: "dist/*.exe dist/*.exe.blockmap dist/latest.yml"
     secrets: inherit
