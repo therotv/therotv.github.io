@@ -21,6 +21,7 @@ env:
   # `python3 make.py secrets`. O app roda sem elas (sem pôster do TMDB / sem Firebase).
   EXPO_PUBLIC_TMDB_API_KEY: ${{ secrets.EXPO_PUBLIC_TMDB_API_KEY }}
   EXPO_PUBLIC_TMDB_API_V3_KEY: ${{ secrets.EXPO_PUBLIC_TMDB_API_V3_KEY }}
+  EXPO_PUBLIC_OMDB_API_KEY: ${{ secrets.EXPO_PUBLIC_OMDB_API_KEY }}
   EXPO_PUBLIC_GROQ_API_KEY: ${{ secrets.EXPO_PUBLIC_GROQ_API_KEY }}
   EXPO_PUBLIC_GROQ_MODEL: ${{ secrets.EXPO_PUBLIC_GROQ_MODEL }}
   EXPO_PUBLIC_FIREBASE_API_KEY: ${{ secrets.EXPO_PUBLIC_FIREBASE_API_KEY }}
