@@ -35,6 +35,17 @@ env:
   # Web, então o APK e o .app da release precisam dos clientes nativos, não deste de web.
   EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID }}
   EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID }}
+  # Assinatura do APK de release (keystore próprio, não o debug do template). Com `make secrets`
+  # as credenciais vão para o repo; sem elas o build ainda sai, assinado com o debug.keystore.
+  THEROTV_KEYSTORE_PASSWORD: ${{ secrets.THEROTV_KEYSTORE_PASSWORD }}
+  THEROTV_KEY_ALIAS: ${{ secrets.THEROTV_KEY_ALIAS }}
+  THEROTV_KEY_PASSWORD: ${{ secrets.THEROTV_KEY_PASSWORD }}
+  # Assinatura do instalador Windows (Authenticode). O electron-builder lê CSC_LINK e
+  # CSC_KEY_PASSWORD sozinho: enquanto os secrets estiverem vazios, o .exe sai como hoje
+  # (sem assinatura). Quando houver certificado (Azure Artifact Signing ou OV), cadastre os
+  # secrets e o próximo build já sai assinado — sem mudar mais nada.
+  CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+  CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
 
 jobs:
   build:
@@ -67,6 +78,16 @@ jobs:
           java-version: "17"
       - if: inputs.platform == 'android'
         uses: gradle/actions/setup-gradle@v4
+      # Keystore de release: decodifica o secret base64 para android/app/ e exporta as env vars
+      # que o signingConfigs.release do build.gradle lê. Sem o secret (fork/PR), o build cai no
+      # debug.keystore e ainda gera APK — mas não é o binário de produção.
+      - name: Restaura o keystore de release (Android)
+        if: inputs.platform == 'android' && env.THEROTV_KEYSTORE_B64 != ''
+        shell: bash
+        env:
+          THEROTV_KEYSTORE_B64: ${{ secrets.THEROTV_KEYSTORE_B64 }}
+        run: |
+          printf '%s' "$THEROTV_KEYSTORE_B64" | base64 --decode > android/app/therotv-release.keystore
       - if: inputs.platform == 'windows' || inputs.platform == 'linux'
         uses: actions/setup-node@v4
         with:
